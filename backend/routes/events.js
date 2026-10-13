@@ -12,12 +12,12 @@ router.get('/', async (req, res) => {
     const values = [];
 
     if (search) {
-      values.push(`%${search}%`);
+      values.push(`%${String(search).trim()}%`);
       conditions.push(`title ILIKE $${values.length}`);
     }
     if (category) {
-      values.push(category);
-      conditions.push(`category = $${values.length}`);
+      values.push(String(category).trim().toLowerCase());
+      conditions.push(`LOWER(TRIM(category)) = $${values.length}`);
     }
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
@@ -67,17 +67,36 @@ router.post('/', auth, requireRole('organizer', 'admin'), async (req, res) => {
 router.put('/:id', auth, requireRole('organizer', 'admin'), async (req, res) => {
   try {
     const { title, description, category, venue, event_date, capacity, poster_url } = req.body;
+    const eventId = Number(req.params.id);
+    const organizerId = Number(req.user.id);
+
+    if (!Number.isInteger(eventId) || !Number.isInteger(organizerId)) {
+      return res.status(400).json({ error: 'Invalid event or organizer id' });
+    }
+    if (!title || !event_date || capacity === undefined || capacity === null || capacity === '') {
+      return res.status(400).json({ error: 'title, event_date, capacity required' });
+    }
+
+    const numericCapacity = Number(capacity);
+    const parsedDate = new Date(event_date);
+    if (!Number.isInteger(numericCapacity) || numericCapacity < 1) {
+      return res.status(400).json({ error: 'capacity must be a positive whole number' });
+    }
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'event_date must be a valid date' });
+    }
+
     const result = await pool.query(
       `UPDATE events SET title=$1, description=$2, category=$3, venue=$4,
        event_date=$5, capacity=$6, poster_url=$7
        WHERE id=$8 AND (organizer_id=$9 OR $10 = 'admin') RETURNING *`,
-      [title, description, category, venue, event_date, capacity, poster_url,
-       req.params.id, req.user.id, req.user.role]
+      [title, description ?? null, category ?? null, venue ?? null, event_date,
+       numericCapacity, poster_url ?? null, eventId, organizerId, req.user.role]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found or not yours' });
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error('Error updating event:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
